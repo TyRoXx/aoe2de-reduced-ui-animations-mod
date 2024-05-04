@@ -4,6 +4,7 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
 };
+use serde_json::json;
 use tracing::{debug, info, info_span};
 use tracing_subscriber::fmt::format::FmtSpan;
 
@@ -257,9 +258,19 @@ fn modify_wpfg<'t>(wpfg_installation: &'t (dyn ReadDirectory + 't)) -> Directory
     Directory { entries: entries }
 }
 
-fn create_info_json() -> DirectoryEntry {
-    let info_json = r#"{"Author":"Flauschfuchs","CacheStatus":0,"Description":"Recreation of <b>0xDB No UI Transitions 1.4</b> by Flauschfuchs so that it works in May 2024.","Title":"Reduced UI Animations"}"#;
-    DirectoryEntry::File(Vec::from(info_json.as_bytes()))
+fn create_info_json() -> serde_json::Value  {
+    let info = json!({
+    "Author": "Flauschfuchs",
+    "CacheStatus": 0,
+    "Description": "Recreation of <b>0xDB No UI Transitions 1.4</b> by Flauschfuchs so that it works in May 2024.",
+    "Title": "Reduced UI Animations"
+});
+     return info
+}
+
+#[test]
+fn test_create_info_json() {
+    assert_eq!(r#"{"Author":"Flauschfuchs","CacheStatus":0,"Description":"Recreation of <b>0xDB No UI Transitions 1.4</b> by Flauschfuchs so that it works in May 2024.","Title":"Reduced UI Animations"}"#, create_info_json().to_string());
 }
 
 fn generate_mod(game_installation: &dyn ReadDirectory) -> Directory {
@@ -268,7 +279,7 @@ fn generate_mod(game_installation: &dyn ReadDirectory) -> Directory {
     {
         let info_json_name = "info.json";
         info!("Creating {}", info_json_name);
-        entries.insert(info_json_name.to_string(), create_info_json());
+        entries.insert(info_json_name.to_string(),DirectoryEntry::File(Vec::from(create_info_json().to_string().as_bytes())) );
     }
 
     // TODO: thumbnail.png
