@@ -105,7 +105,11 @@ fn write_directory(data: &Directory, into: &dyn WriteDirectory) {
 
 const GENERATED_MOD_NAME: &str = "Reduced UI Animations";
 
-fn replace_all_matching_elements(original_content: &str, start_pattern: &str) -> String {
+fn replace_all_matching_elements(
+    original_content: &str,
+    start_pattern: &str,
+    end_pattern: &str,
+) -> String {
     // We use string replacement instead of an XML parser to preserve all of the whitespace in order to make diffing easier.
     let mut modified_content = String::new();
     let mut remaining_content: &str = original_content;
@@ -122,14 +126,14 @@ fn replace_all_matching_elements(original_content: &str, start_pattern: &str) ->
                 modified_content += start_pattern;
                 let (_, after_element_start_pattern) =
                     at_start_pattern.split_at(start_pattern.len());
-                let end_pattern = "/>";
                 let end_found_at = after_element_start_pattern
                     .find(end_pattern)
                     .expect("Expected to find the end of the XML element");
                 let (element_content, after_element_content) =
                     after_element_start_pattern.split_at(end_found_at);
                 modified_content += element_content;
-                modified_content += "/>-->";
+                modified_content += end_pattern;
+                modified_content += "-->";
                 (_, remaining_content) = after_element_content.split_at(end_pattern.len());
             }
             None => {
@@ -144,7 +148,12 @@ fn replace_all_matching_elements(original_content: &str, start_pattern: &str) ->
 }
 
 fn patch_xaml(original_content: &str) -> String {
-    replace_all_matching_elements(original_content, "<local:Age2SwipeEffect")
+    let no_swipe_effects =
+        replace_all_matching_elements(original_content, "<local:Age2SwipeEffect", "/>");
+    // not sure what Age2BlurEffect is, but "0xDB No UI Transitions 1.4" comments it out
+    let no_blur_effects =
+        replace_all_matching_elements(&no_swipe_effects, "<local:Age2BlurEffect", "/>");
+    no_blur_effects
 }
 
 #[test]
@@ -153,7 +162,7 @@ fn test_patch_xaml_empty() {
 }
 
 #[test]
-fn test_patch_xaml_minimal() {
+fn test_patch_xaml_swipe_effect() {
     assert_eq!(
         "<!--Commented out by the mod Reduced UI Animations: <local:Age2SwipeEffect/>-->",
         patch_xaml("<local:Age2SwipeEffect/>")
@@ -161,7 +170,23 @@ fn test_patch_xaml_minimal() {
 }
 
 #[test]
-fn test_patch_xaml_twice() {
+fn test_patch_xaml_blur_effect() {
+    assert_eq!(
+        "<Canvas.Effect>\n<!--Commented out by the mod Reduced UI Animations: <local:Age2BlurEffect />--></Canvas.Effect>",
+        patch_xaml("<Canvas.Effect>\n<local:Age2BlurEffect /></Canvas.Effect>")
+    );
+}
+
+#[test]
+fn test_patch_xaml_two_different_effects() {
+    assert_eq!(
+        "<Canvas.Effect>\n<!--Commented out by the mod Reduced UI Animations: <local:Age2BlurEffect />--></Canvas.Effect><!--Commented out by the mod Reduced UI Animations: <local:Age2SwipeEffect/>-->",
+        patch_xaml("<Canvas.Effect>\n<local:Age2BlurEffect /></Canvas.Effect><local:Age2SwipeEffect/>")
+    );
+}
+
+#[test]
+fn test_patch_xaml_same_effect_twice() {
     assert_eq!(
         "<!--Commented out by the mod Reduced UI Animations: <local:Age2SwipeEffect/>--><!--Commented out by the mod Reduced UI Animations: <local:Age2SwipeEffect/>-->",
         patch_xaml("<local:Age2SwipeEffect/><local:Age2SwipeEffect/>")
@@ -184,6 +209,25 @@ fn test_patch_xaml_realistic() {
                 />-->
         </Canvas.Effect>
     </Canvas>
+    
+    <Canvas Width="1000" Height="2160" Canvas.Left="235" Background="Transparent">
+        <Canvas.Effect>
+            <!--Commented out by the mod Reduced UI Animations: <local:Age2BlurEffect
+                BlurMask ="{StaticResource ribbon00_BBAA_blurmask}"
+                SwipeLow="{Binding ElementName=Page,Path=SwipeLow}"
+                SwipeHigh="{Binding ElementName=Page,Path=SwipeHigh}"
+                PixelTop="0"
+                PixelLeft="235"
+                PixelWidth="1000"
+                PixelHeight="2160"
+                P1="40,0"
+                P2="40,0"
+                TextureSize="128,128"
+                ScreenWidth="{Binding ElementName=Page, Path=ActualWidth}"
+                ScreenHeight="{Binding ElementName=Page, Path=ActualHeight}"
+                    />-->
+        </Canvas.Effect>
+    </Canvas>
 </local:Age2ScreenSimpleMainMenu>
 "#,
         patch_xaml(
@@ -198,6 +242,25 @@ fn test_patch_xaml_realistic() {
                 ScreenWidth="{Binding ElementName=Page, Path=ActualWidth}"
                 ScreenHeight="{Binding ElementName=Page, Path=ActualHeight}"
                 />
+        </Canvas.Effect>
+    </Canvas>
+    
+    <Canvas Width="1000" Height="2160" Canvas.Left="235" Background="Transparent">
+        <Canvas.Effect>
+            <local:Age2BlurEffect
+                BlurMask ="{StaticResource ribbon00_BBAA_blurmask}"
+                SwipeLow="{Binding ElementName=Page,Path=SwipeLow}"
+                SwipeHigh="{Binding ElementName=Page,Path=SwipeHigh}"
+                PixelTop="0"
+                PixelLeft="235"
+                PixelWidth="1000"
+                PixelHeight="2160"
+                P1="40,0"
+                P2="40,0"
+                TextureSize="128,128"
+                ScreenWidth="{Binding ElementName=Page, Path=ActualWidth}"
+                ScreenHeight="{Binding ElementName=Page, Path=ActualHeight}"
+                    />
         </Canvas.Effect>
     </Canvas>
 </local:Age2ScreenSimpleMainMenu>
