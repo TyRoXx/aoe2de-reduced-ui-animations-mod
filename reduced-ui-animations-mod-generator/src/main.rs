@@ -104,12 +104,15 @@ fn write_directory(data: &Directory, into: &dyn WriteDirectory) {
 
 const GENERATED_MOD_NAME: &str = "Reduced UI Animations";
 
-fn patch_xaml(original_content: &str) -> String {
+fn replace_all_matching_elements(
+    original_content: &str,
+    start_pattern: &str,
+    commented_out_start_pattern: &str,
+) -> String {
     // We use string replacement instead of an XML parser to preserve all of the whitespace in order to make diffing easier.
     let mut modified_content = String::new();
     let mut remaining_content: &str = original_content;
     while !remaining_content.is_empty() {
-        let start_pattern = "<local:Age2SwipeEffect";
         match remaining_content.find(start_pattern) {
             Some(start_found_at) => {
                 debug!("Found {}", start_pattern);
@@ -118,7 +121,8 @@ fn patch_xaml(original_content: &str) -> String {
                 modified_content += before_start_pattern;
                 modified_content += "<!--Commented out by the mod ";
                 modified_content += GENERATED_MOD_NAME;
-                modified_content += "--><!--local:Age2SwipeEffect";
+                modified_content += "-->";
+                modified_content += commented_out_start_pattern;
                 let (_, after_element_start_pattern) =
                     at_start_pattern.split_at(start_pattern.len());
                 let end_pattern = "/>";
@@ -140,6 +144,14 @@ fn patch_xaml(original_content: &str) -> String {
     // we don't remove anything, we just comment out, so that you can still see what had been there
     assert!(modified_content.len() >= original_content.len());
     modified_content
+}
+
+fn patch_xaml(original_content: &str) -> String {
+    replace_all_matching_elements(
+        original_content,
+        "<local:Age2SwipeEffect",
+        "<!--local:Age2SwipeEffect",
+    )
 }
 
 #[test]
