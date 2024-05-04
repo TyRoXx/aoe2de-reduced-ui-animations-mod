@@ -38,7 +38,7 @@ impl ReadDirectory for FileSystem {
                 .expect("Tried to determine type of directory entry");
             let path = entry.path();
             if !entry_type.is_file() {
-                debug!("Ignoring non-file directory entry: {}",path.display() );
+                debug!("Ignoring non-file directory entry: {}", path.display());
                 return None;
             }
             let name = entry
@@ -71,7 +71,11 @@ impl WriteDirectory for FileSystem {
     fn create_file(&self, name: &str, content: &[u8]) {
         std::fs::create_dir_all(&self.root).expect("Tried to create a directory");
         let file_path = self.root.join(name);
-        debug!("Creating file {} with {} bytes of content", file_path.display(), content.len());
+        debug!(
+            "Creating file {} with {} bytes of content",
+            file_path.display(),
+            content.len()
+        );
         std::fs::write(&file_path, &content).expect("Tried to create a file");
     }
 }
@@ -98,21 +102,23 @@ fn write_directory(data: &Directory, into: &dyn WriteDirectory) {
     }
 }
 
+const GENERATED_MOD_NAME: &str = "Reduced UI Animations";
+
 fn patch_xaml(original_content: &str) -> String {
     // We use string replacement instead of an XML parser to preserve all of the whitespace in order to make diffing easier.
     let mut modified_content = String::new();
     let mut remaining_content: &str = original_content;
     while !remaining_content.is_empty() {
         let start_pattern = "<local:Age2SwipeEffect";
-        let element_commented_out = "<!--local:Age2SwipeEffect";
         match remaining_content.find(start_pattern) {
             Some(start_found_at) => {
                 debug!("Found {}", start_pattern);
                 let (before_start_pattern, at_start_pattern) =
                     remaining_content.split_at(start_found_at);
                 modified_content += before_start_pattern;
-                // TODO: insert comment to mark the replacement
-                modified_content += element_commented_out;
+                modified_content += "<!--Commented out by the mod ";
+                modified_content += GENERATED_MOD_NAME;
+                modified_content += "--><!--local:Age2SwipeEffect";
                 let (_, after_element_start_pattern) =
                     at_start_pattern.split_at(start_pattern.len());
                 let end_pattern = "/>";
@@ -144,7 +150,7 @@ fn test_patch_xaml_empty() {
 #[test]
 fn test_patch_xaml_minimal() {
     assert_eq!(
-        "<!--local:Age2SwipeEffect/-->",
+        "<!--Commented out by the mod Reduced UI Animations--><!--local:Age2SwipeEffect/-->",
         patch_xaml("<local:Age2SwipeEffect/>")
     );
 }
@@ -152,7 +158,7 @@ fn test_patch_xaml_minimal() {
 #[test]
 fn test_patch_xaml_twice() {
     assert_eq!(
-        "<!--local:Age2SwipeEffect/--><!--local:Age2SwipeEffect/-->",
+        "<!--Commented out by the mod Reduced UI Animations--><!--local:Age2SwipeEffect/--><!--Commented out by the mod Reduced UI Animations--><!--local:Age2SwipeEffect/-->",
         patch_xaml("<local:Age2SwipeEffect/><local:Age2SwipeEffect/>")
     );
 }
@@ -163,7 +169,7 @@ fn test_patch_xaml_realistic() {
         r#"<local:Age2ScreenSimpleMainMenu x:Name="Page" d:DesignHeight="2160" d:DesignWidth="3840" mc:Ignorable="d" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:d="http://schemas.microsoft.com/expression/blend/2008" xmlns:local="clr-namespace:aoe2wpfg" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Canvas Width="3840" Height="2160" Background="Transparent">
         <Canvas.Effect>
-            <!--local:Age2SwipeEffect
+            <!--Commented out by the mod Reduced UI Animations--><!--local:Age2SwipeEffect
                 SwipeLow="{Binding ElementName=Page,Path=SwipeLow}"
                 SwipeHigh="{Binding ElementName=Page,Path=SwipeHigh}"
                 PixelWidth="3840"
@@ -207,10 +213,7 @@ fn modify_xaml_files<'t>(directory: &'t dyn ReadDirectory) -> BTreeMap<String, V
     for file_entry in directory.enumerate_files() {
         let modified_file = modify_xaml_file(&file_entry.content);
         if &file_entry.content[..] == &modified_file[..] {
-            info!(
-                "XAML file needs no changes: {}",
-                &file_entry.name
-            );
+            info!("XAML file needs no changes: {}", &file_entry.name);
             continue;
         }
         info!("XAML file will be replaced: {}", &file_entry.name);
@@ -244,7 +247,7 @@ fn modify_wpfg<'t>(wpfg_installation: &'t (dyn ReadDirectory + 't)) -> Directory
     Directory { entries: entries }
 }
 
-fn create_info_json() ->DirectoryEntry{
+fn create_info_json() -> DirectoryEntry {
     let info_json = r#"{"Author":"Flauschfuchs","CacheStatus":0,"Description":"Recreation of <b>0xDB No UI Transitions 1.4</b> by Flauschfuchs so that it works in May 2024.","Title":"Reduced UI Animations"}"#;
     DirectoryEntry::File(Vec::from(info_json.as_bytes()))
 }
@@ -253,23 +256,20 @@ fn generate_mod(game_installation: &dyn ReadDirectory) -> Directory {
     let mut entries = BTreeMap::new();
 
     {
-    let info_json_name = "info.json";
-    info!("Creating {}", info_json_name);
-    entries.insert(
-        info_json_name .to_string(),
-        create_info_json()
-    );
+        let info_json_name = "info.json";
+        info!("Creating {}", info_json_name);
+        entries.insert(info_json_name.to_string(), create_info_json());
     }
 
     // TODO: thumbnail.png
 
-    let resources_directory_name ="resources";
+    let resources_directory_name = "resources";
     let resources = game_installation.subdirectory(resources_directory_name);
 
-    let common_directory_name ="_common";
+    let common_directory_name = "_common";
     let common = resources.subdirectory(common_directory_name);
 
-    let wpfg_directory_name ="wpfg";
+    let wpfg_directory_name = "wpfg";
     let wpfg = common.subdirectory(wpfg_directory_name);
 
     let _span = info_span!("Modding wpfg");
@@ -307,8 +307,7 @@ fn main() {
         .join("Games/Age of Empires 2 DE")
         .join(aoe2_profile_id)
         .join("mods/local");
-    let generated_mod_name = "Reduced UI Animations";
-    let destination_directory = local_mods.join(generated_mod_name);
+    let destination_directory = local_mods.join(GENERATED_MOD_NAME);
     info!("Aoe2 DE installation: {}", aoe2de_installation.display());
     info!("Generating mod into {}", destination_directory.display());
     let generated_mod = generate_mod(&FileSystem {
@@ -330,7 +329,10 @@ fn main() {
             error
         ),
     }
-    info!("Writing the mod to the destination directory: {}", destination_directory.display());
+    info!(
+        "Writing the mod to the destination directory: {}",
+        destination_directory.display()
+    );
     write_directory(
         &generated_mod,
         &FileSystem {
