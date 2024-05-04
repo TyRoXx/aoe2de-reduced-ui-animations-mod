@@ -1,0 +1,1 @@
+# aoe2de-reduced-ui-animations-mod
