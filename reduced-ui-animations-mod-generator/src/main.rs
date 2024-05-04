@@ -109,6 +109,8 @@ fn replace_all_matching_elements(
     original_content: &str,
     start_pattern: &str,
     end_pattern: &str,
+    replacement_prefix: &str,
+    replacement_suffix: &str,
 ) -> String {
     // We use string replacement instead of an XML parser to preserve all of the whitespace in order to make diffing easier.
     let mut modified_content = String::new();
@@ -120,9 +122,7 @@ fn replace_all_matching_elements(
                 let (before_start_pattern, at_start_pattern) =
                     remaining_content.split_at(start_found_at);
                 modified_content += before_start_pattern;
-                modified_content += "<!--Commented out by the mod ";
-                modified_content += GENERATED_MOD_NAME;
-                modified_content += ": ";
+                modified_content += replacement_prefix;
                 modified_content += start_pattern;
                 let (_, after_element_start_pattern) =
                     at_start_pattern.split_at(start_pattern.len());
@@ -133,7 +133,7 @@ fn replace_all_matching_elements(
                     after_element_start_pattern.split_at(end_found_at);
                 modified_content += element_content;
                 modified_content += end_pattern;
-                modified_content += "-->";
+                modified_content += replacement_suffix;
                 (_, remaining_content) = after_element_content.split_at(end_pattern.len());
             }
             None => {
@@ -147,13 +147,34 @@ fn replace_all_matching_elements(
     modified_content
 }
 
+fn comment_out_matching_xml_elements(
+    original_content: &str,
+    start_pattern: &str,
+    end_pattern: &str,
+) -> String {
+    replace_all_matching_elements(
+        original_content,
+        start_pattern,
+        end_pattern,
+        &format!("<!--Commented out by the mod {}: ", GENERATED_MOD_NAME),
+        "-->",
+    )
+}
+
 fn patch_xaml(original_content: &str) -> String {
     let no_swipe_effects =
-        replace_all_matching_elements(original_content, "<local:Age2SwipeEffect", "/>");
+        comment_out_matching_xml_elements(original_content, "<local:Age2SwipeEffect", "/>");
     // not sure what Age2BlurEffect is, but "0xDB No UI Transitions 1.4" comments it out
     let no_blur_effects =
-        replace_all_matching_elements(&no_swipe_effects, "<local:Age2BlurEffect", "/>");
-    no_blur_effects
+        comment_out_matching_xml_elements(&no_swipe_effects, "<local:Age2BlurEffect", "/>");
+    let no_fade = replace_all_matching_elements(
+        &no_blur_effects,
+        "Fill=\"{Binding ElementName=window, Path=FadeBrush",
+        "}\"",
+        "Fill=\"White\" _",
+        "",
+    );
+    no_fade
 }
 
 #[test]
@@ -174,6 +195,30 @@ fn test_patch_xaml_blur_effect() {
     assert_eq!(
         "<Canvas.Effect>\n<!--Commented out by the mod Reduced UI Animations: <local:Age2BlurEffect />--></Canvas.Effect>",
         patch_xaml("<Canvas.Effect>\n<local:Age2BlurEffect /></Canvas.Effect>")
+    );
+}
+
+#[test]
+fn test_patch_xaml_fade_brush() {
+    assert_eq!(
+        r#"<!--a fade over the screen, but under the modals-->
+        <Rectangle 
+           x:Name="Fade"
+           Fill="White" _Fill="{Binding ElementName=window, Path=FadeBrush}" 
+           Visibility="Hidden"
+           Height="{Binding ElementName=window, Path=ActualHeight}"
+           Width="{Binding ElementName=window, Path=ActualWidth}" 
+           />"#,
+        patch_xaml(
+            r#"<!--a fade over the screen, but under the modals-->
+        <Rectangle 
+           x:Name="Fade"
+           Fill="{Binding ElementName=window, Path=FadeBrush}" 
+           Visibility="Hidden"
+           Height="{Binding ElementName=window, Path=ActualHeight}"
+           Width="{Binding ElementName=window, Path=ActualWidth}" 
+           />"#
+        )
     );
 }
 
@@ -276,7 +321,7 @@ fn modify_xaml_file(original_content: &[u8]) -> Vec<u8> {
     modified_content.into()
 }
 
-fn modify_xaml_files<'t>(directory: &'t dyn ReadDirectory) -> BTreeMap<String, Vec<u8>> {
+fn modify_xaml_files<'t>(directory: &'t dyn ReadDirectory) -> BTreeMap<String, DirectoryEntry> {
     let mut entries = BTreeMap::new();
     for file_entry in directory.enumerate_files() {
         let modified_file = modify_xaml_file(&file_entry.content);
@@ -285,30 +330,21 @@ fn modify_xaml_files<'t>(directory: &'t dyn ReadDirectory) -> BTreeMap<String, V
             continue;
         }
         info!("XAML file will be replaced: {}", &file_entry.name);
-        entries.insert(file_entry.name, modified_file);
+        entries.insert(file_entry.name, DirectoryEntry::File(modified_file));
     }
     entries
 }
 
 fn modify_wpfg<'t>(wpfg_installation: &'t (dyn ReadDirectory + 't)) -> Directory {
-    let mut entries = BTreeMap::new();
+    let mut entries = modify_xaml_files(wpfg_installation);
     for subdirectory in ["dialog", "panel", "screen", "tab"] {
         let _span = info_span!("Modding", subdirectory);
         let subdirectory_reader = wpfg_installation.subdirectory(subdirectory);
-        let mut modified_files = modify_xaml_files(subdirectory_reader.as_ref());
-        let subdirectory_entries = modified_files
-            .iter_mut()
-            .map(|file_entry| {
-                (
-                    file_entry.0.clone(),
-                    DirectoryEntry::File(file_entry.1.clone()),
-                )
-            })
-            .collect();
+        let modified_files = modify_xaml_files(subdirectory_reader.as_ref());
         entries.insert(
             subdirectory.to_string(),
             DirectoryEntry::Subdirectory(Box::new(Directory {
-                entries: subdirectory_entries,
+                entries: modified_files,
             })),
         );
     }
