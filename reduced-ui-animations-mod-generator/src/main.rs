@@ -107,7 +107,6 @@ const GENERATED_MOD_NAME: &str = "Reduced UI Animations";
 fn replace_all_matching_elements(
     original_content: &str,
     start_pattern: &str,
-    commented_out_start_pattern: &str,
 ) -> String {
     // We use string replacement instead of an XML parser to preserve all of the whitespace in order to make diffing easier.
     let mut modified_content = String::new();
@@ -121,8 +120,8 @@ fn replace_all_matching_elements(
                 modified_content += before_start_pattern;
                 modified_content += "<!--Commented out by the mod ";
                 modified_content += GENERATED_MOD_NAME;
-                modified_content += "-->";
-                modified_content += commented_out_start_pattern;
+                modified_content += ": ";
+                modified_content += start_pattern;
                 let (_, after_element_start_pattern) =
                     at_start_pattern.split_at(start_pattern.len());
                 let end_pattern = "/>";
@@ -132,7 +131,7 @@ fn replace_all_matching_elements(
                 let (element_content, after_element_content) =
                     after_element_start_pattern.split_at(end_found_at);
                 modified_content += element_content;
-                modified_content += "/-->";
+                modified_content += "/>-->";
                 (_, remaining_content) = after_element_content.split_at(end_pattern.len());
             }
             None => {
@@ -150,7 +149,6 @@ fn patch_xaml(original_content: &str) -> String {
     replace_all_matching_elements(
         original_content,
         "<local:Age2SwipeEffect",
-        "<!--local:Age2SwipeEffect",
     )
 }
 
@@ -162,7 +160,7 @@ fn test_patch_xaml_empty() {
 #[test]
 fn test_patch_xaml_minimal() {
     assert_eq!(
-        "<!--Commented out by the mod Reduced UI Animations--><!--local:Age2SwipeEffect/-->",
+        "<!--Commented out by the mod Reduced UI Animations: <local:Age2SwipeEffect/>-->",
         patch_xaml("<local:Age2SwipeEffect/>")
     );
 }
@@ -170,7 +168,7 @@ fn test_patch_xaml_minimal() {
 #[test]
 fn test_patch_xaml_twice() {
     assert_eq!(
-        "<!--Commented out by the mod Reduced UI Animations--><!--local:Age2SwipeEffect/--><!--Commented out by the mod Reduced UI Animations--><!--local:Age2SwipeEffect/-->",
+        "<!--Commented out by the mod Reduced UI Animations: <local:Age2SwipeEffect/>--><!--Commented out by the mod Reduced UI Animations: <local:Age2SwipeEffect/>-->",
         patch_xaml("<local:Age2SwipeEffect/><local:Age2SwipeEffect/>")
     );
 }
@@ -181,14 +179,14 @@ fn test_patch_xaml_realistic() {
         r#"<local:Age2ScreenSimpleMainMenu x:Name="Page" d:DesignHeight="2160" d:DesignWidth="3840" mc:Ignorable="d" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:d="http://schemas.microsoft.com/expression/blend/2008" xmlns:local="clr-namespace:aoe2wpfg" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Canvas Width="3840" Height="2160" Background="Transparent">
         <Canvas.Effect>
-            <!--Commented out by the mod Reduced UI Animations--><!--local:Age2SwipeEffect
+            <!--Commented out by the mod Reduced UI Animations: <local:Age2SwipeEffect
                 SwipeLow="{Binding ElementName=Page,Path=SwipeLow}"
                 SwipeHigh="{Binding ElementName=Page,Path=SwipeHigh}"
                 PixelWidth="3840"
                 PixelHeight="2160"
                 ScreenWidth="{Binding ElementName=Page, Path=ActualWidth}"
                 ScreenHeight="{Binding ElementName=Page, Path=ActualHeight}"
-                /-->
+                />-->
         </Canvas.Effect>
     </Canvas>
 </local:Age2ScreenSimpleMainMenu>
