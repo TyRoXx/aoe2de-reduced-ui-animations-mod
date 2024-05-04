@@ -1,10 +1,10 @@
 #[cfg(test)]
 use pretty_assertions::assert_eq;
+use serde_json::json;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
 };
-use serde_json::json;
 use tracing::{debug, info, info_span};
 use tracing_subscriber::fmt::format::FmtSpan;
 
@@ -105,10 +105,7 @@ fn write_directory(data: &Directory, into: &dyn WriteDirectory) {
 
 const GENERATED_MOD_NAME: &str = "Reduced UI Animations";
 
-fn replace_all_matching_elements(
-    original_content: &str,
-    start_pattern: &str,
-) -> String {
+fn replace_all_matching_elements(original_content: &str, start_pattern: &str) -> String {
     // We use string replacement instead of an XML parser to preserve all of the whitespace in order to make diffing easier.
     let mut modified_content = String::new();
     let mut remaining_content: &str = original_content;
@@ -147,10 +144,7 @@ fn replace_all_matching_elements(
 }
 
 fn patch_xaml(original_content: &str) -> String {
-    replace_all_matching_elements(
-        original_content,
-        "<local:Age2SwipeEffect",
-    )
+    replace_all_matching_elements(original_content, "<local:Age2SwipeEffect")
 }
 
 #[test]
@@ -258,19 +252,22 @@ fn modify_wpfg<'t>(wpfg_installation: &'t (dyn ReadDirectory + 't)) -> Directory
     Directory { entries: entries }
 }
 
-fn create_info_json() -> serde_json::Value  {
+fn create_info_json() -> serde_json::Value {
     let info = json!({
-    "Author": "Flauschfuchs",
-    "CacheStatus": 0,
-    "Description": "Recreation of <b>0xDB No UI Transitions 1.4</b> by Flauschfuchs so that it works in May 2024.",
-    "Title": "Reduced UI Animations"
-});
-     return info
+        "Author": "Flauschfuchs",
+        "CacheStatus": 0,
+        "Description": "Recreation of <b>0xDB No UI Transitions 1.4</b> by Flauschfuchs so that it works in May 2024.",
+        "Title": "Reduced UI Animations"
+    });
+    return info;
 }
 
 #[test]
 fn test_create_info_json() {
-    assert_eq!(r#"{"Author":"Flauschfuchs","CacheStatus":0,"Description":"Recreation of <b>0xDB No UI Transitions 1.4</b> by Flauschfuchs so that it works in May 2024.","Title":"Reduced UI Animations"}"#, create_info_json().to_string());
+    assert_eq!(
+        r#"{"Author":"Flauschfuchs","CacheStatus":0,"Description":"Recreation of <b>0xDB No UI Transitions 1.4</b> by Flauschfuchs so that it works in May 2024.","Title":"Reduced UI Animations"}"#,
+        create_info_json().to_string()
+    );
 }
 
 fn generate_mod(game_installation: &dyn ReadDirectory) -> Directory {
@@ -279,7 +276,10 @@ fn generate_mod(game_installation: &dyn ReadDirectory) -> Directory {
     {
         let info_json_name = "info.json";
         info!("Creating {}", info_json_name);
-        entries.insert(info_json_name.to_string(),DirectoryEntry::File(Vec::from(create_info_json().to_string().as_bytes())) );
+        entries.insert(
+            info_json_name.to_string(),
+            DirectoryEntry::File(Vec::from(create_info_json().to_string().as_bytes())),
+        );
     }
 
     // TODO: thumbnail.png
