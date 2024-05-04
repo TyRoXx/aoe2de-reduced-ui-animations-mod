@@ -1,0 +1,10 @@
+[package]
+name = "reduced-ui-animations-mod-generator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+whoami = "1.5.1"
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3", features = [] }
+pretty_assertions = "1.4.0"
