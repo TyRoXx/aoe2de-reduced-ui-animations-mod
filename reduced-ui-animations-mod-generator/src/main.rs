@@ -4,9 +4,11 @@ use serde_json::json;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
+    str::FromStr,
 };
 use tracing::{debug, info, info_span};
 use tracing_subscriber::fmt::format::FmtSpan;
+use xml_dom::level2::{Document, Element, Name, Node, RefNode};
 
 struct FileEntry {
     name: String,
@@ -105,119 +107,115 @@ fn write_directory(data: &Directory, into: &dyn WriteDirectory) {
 
 const GENERATED_MOD_NAME: &str = "Reduced UI Animations";
 
-fn replace_all_matching_elements(
-    original_content: &str,
-    start_pattern: &str,
-    end_pattern: &str,
-    replacement_prefix: &str,
-    replacement_suffix: &str,
-) -> String {
-    // We use string replacement instead of an XML parser to preserve all of the whitespace in order to make diffing easier.
-    let mut modified_content = String::new();
-    let mut remaining_content: &str = original_content;
-    while !remaining_content.is_empty() {
-        match remaining_content.find(start_pattern) {
-            Some(start_found_at) => {
-                debug!("Found {}", start_pattern);
-                let (before_start_pattern, at_start_pattern) =
-                    remaining_content.split_at(start_found_at);
-                modified_content += before_start_pattern;
-                modified_content += replacement_prefix;
-                modified_content += start_pattern;
-                let (_, after_element_start_pattern) =
-                    at_start_pattern.split_at(start_pattern.len());
-                let end_found_at = after_element_start_pattern
-                    .find(end_pattern)
-                    .expect("Expected to find the end of the XML element");
-                let (element_content, after_element_content) =
-                    after_element_start_pattern.split_at(end_found_at);
-                modified_content += element_content;
-                modified_content += end_pattern;
-                modified_content += replacement_suffix;
-                (_, remaining_content) = after_element_content.split_at(end_pattern.len());
-            }
-            None => {
-                modified_content += remaining_content;
-                remaining_content = "";
-            }
+fn is_fade_brush_rectangle(node: &RefNode) -> bool {
+    let rectangle = Name::from_str("Rectangle").expect("Tried to parse an XML element name");
+    if node.node_name() != rectangle {
+        return false;
+    }
+    let maybe_name = node.get_attribute("x:Name");
+    match maybe_name {
+        Some(name) => name == "Fade",
+        None => false,
+    }
+}
+
+enum PatchStatus {
+    Unchanged,
+    Changed,
+}
+
+fn patch_xaml_recursively(node: &mut RefNode) -> PatchStatus {
+    let blur_effect =
+        Name::from_str("local:Age2BlurEffect").expect("Tried to parse an XML element name");
+    let swipe_effect =
+        Name::from_str("local:Age2SwipeEffect").expect("Tried to parse an XML element name");
+    let mut result: PatchStatus = PatchStatus::Unchanged;
+    for mut child in node.child_nodes() {
+        let name = child.node_name();
+        if (name == blur_effect) || (name == swipe_effect) {
+            info!("Removing child node: {}", child.node_name());
+            node.replace_child(
+                node.owner_document()
+                    .expect("Expected an owner document")
+                    .create_comment(&format!(
+                        "The mod {} replaced an element here: {}",
+                        GENERATED_MOD_NAME, name
+                    )),
+                child,
+            )
+            .expect("Tried to replace an element with a comment");
+            result = PatchStatus::Changed;
+            continue;
+        } else if is_fade_brush_rectangle(&child) {
+            info!("Rewriting fade brush element");
+            // just do it like "0xDB No UI Transitions 1.4"
+            child.set_attribute("Canvas.Left", "-1").unwrap();
+            child.set_attribute("Canvas.Top", "-1").unwrap();
+            child.set_attribute("Fill", "Green").unwrap();
+            child.set_attribute("Height", "1").unwrap();
+            child.set_attribute("Width", "1").unwrap();
+            result = PatchStatus::Changed;
+        }
+        match patch_xaml_recursively(&mut child) {
+            PatchStatus::Unchanged => {}
+            PatchStatus::Changed => result = PatchStatus::Changed,
         }
     }
-    // we don't remove anything, we just comment out, so that you can still see what had been there
-    assert!(modified_content.len() >= original_content.len());
-    modified_content
+    result
 }
 
-fn comment_out_matching_xml_elements(
-    original_content: &str,
-    start_pattern: &str,
-    end_pattern: &str,
-) -> String {
-    replace_all_matching_elements(
-        original_content,
-        start_pattern,
-        end_pattern,
-        &format!("<!--Commented out by the mod {}: ", GENERATED_MOD_NAME),
-        "-->",
-    )
+fn xml_to_string(root: &RefNode) -> String {
+    // TODO: find a deterministic solution. The order of attributes is random because they use HashMap to store them and don't normalize for formatting. Seriously, wtf?
+    root.to_string()
 }
 
-fn patch_xaml(original_content: &str) -> String {
-    let no_swipe_effects =
-        comment_out_matching_xml_elements(original_content, "<local:Age2SwipeEffect", "/>");
-    // not sure what Age2BlurEffect is, but "0xDB No UI Transitions 1.4" comments it out
-    let no_blur_effects =
-        comment_out_matching_xml_elements(&no_swipe_effects, "<local:Age2BlurEffect", "/>");
-    let no_fade = replace_all_matching_elements(
-        &no_blur_effects,
-        "Fill=\"{Binding ElementName=window, Path=FadeBrush",
-        "}\"",
-        "Fill=\"White\" _",
-        "",
-    );
-    no_fade
+fn patch_xaml(original_content: &str) -> Option<String> {
+    let mut root = xml_dom::parser::read_xml(original_content).expect("Tried to parse XML");
+    match patch_xaml_recursively(&mut root) {
+        PatchStatus::Unchanged => None,
+        PatchStatus::Changed => Some(xml_to_string(&root)),
+    }
 }
 
 #[test]
-fn test_patch_xaml_empty() {
-    assert_eq!("", patch_xaml(""));
+fn test_patch_xaml_tiny() {
+    assert_eq!(None, patch_xaml(r#"<Test xmlns="test"></Test>"#));
 }
 
 #[test]
 fn test_patch_xaml_swipe_effect() {
     assert_eq!(
-        "<!--Commented out by the mod Reduced UI Animations: <local:Age2SwipeEffect/>-->",
-        patch_xaml("<local:Age2SwipeEffect/>")
+        Some( "<Test xmlns=\"test\" xmlns:local=\"bla\"><!--The mod Reduced UI Animations replaced an element here: local:Age2SwipeEffect--></Test>".to_string()),
+        patch_xaml(r#"<Test xmlns="test" xmlns:local="bla"><local:Age2SwipeEffect/></Test>"#)
     );
 }
 
 #[test]
 fn test_patch_xaml_blur_effect() {
     assert_eq!(
-        "<Canvas.Effect>\n<!--Commented out by the mod Reduced UI Animations: <local:Age2BlurEffect />--></Canvas.Effect>",
-        patch_xaml("<Canvas.Effect>\n<local:Age2BlurEffect /></Canvas.Effect>")
+        Some("<Test xmlns=\"test\" xmlns:local=\"bla\"><Canvas.Effect>\\n<!--The mod Reduced UI Animations replaced an element here: local:Age2BlurEffect--></Canvas.Effect></Test>".to_string()),
+        patch_xaml(
+            r#"<Test xmlns="test" xmlns:local="bla"><Canvas.Effect>\n<local:Age2BlurEffect /></Canvas.Effect></Test>"#
+        )
     );
 }
 
 #[test]
 fn test_patch_xaml_fade_brush() {
     assert_eq!(
-        r#"<!--a fade over the screen, but under the modals-->
-        <Rectangle 
-           x:Name="Fade"
-           Fill="White" _Fill="{Binding ElementName=window, Path=FadeBrush}" 
-           Visibility="Hidden"
-           Height="{Binding ElementName=window, Path=ActualHeight}"
-           Width="{Binding ElementName=window, Path=ActualWidth}" 
-           />"#,
+        Some(
+            "<Test xmlns=\"test\"><!--a fade over the screen, but under the modals--><Rectangle Width=\"1\" Fill=\"Green\" Canvas.Left=\"-1\" Canvas.Top=\"-1\" Height=\"1\" x:Name=\"Fade\" Visibility=\"Hidden\"></Rectangle></Test>"
+                .to_string()
+        ),
         patch_xaml(
-            r#"<!--a fade over the screen, but under the modals-->
+            r#"<Test xmlns="test"><!--a fade over the screen, but under the modals-->
         <Rectangle 
            x:Name="Fade"
            Fill="{Binding ElementName=window, Path=FadeBrush}" 
            Visibility="Hidden"
            Height="{Binding ElementName=window, Path=ActualHeight}"
            Width="{Binding ElementName=window, Path=ActualWidth}" 
-           />"#
+           /></Test>"#
         )
     );
 }
@@ -225,56 +223,27 @@ fn test_patch_xaml_fade_brush() {
 #[test]
 fn test_patch_xaml_two_different_effects() {
     assert_eq!(
-        "<Canvas.Effect>\n<!--Commented out by the mod Reduced UI Animations: <local:Age2BlurEffect />--></Canvas.Effect><!--Commented out by the mod Reduced UI Animations: <local:Age2SwipeEffect/>-->",
-        patch_xaml("<Canvas.Effect>\n<local:Age2BlurEffect /></Canvas.Effect><local:Age2SwipeEffect/>")
+       Some(  "<Test xmlns=\"test\" xmlns:local=\"bla\"><Canvas.Effect>\\n<!--The mod Reduced UI Animations replaced an element here: local:Age2BlurEffect--></Canvas.Effect><!--The mod Reduced UI Animations replaced an element here: local:Age2SwipeEffect--></Test>".to_string()),
+        patch_xaml(
+            r#"<Test xmlns="test" xmlns:local="bla"><Canvas.Effect>\n<local:Age2BlurEffect /></Canvas.Effect><local:Age2SwipeEffect/></Test>"#
+        )
     );
 }
 
 #[test]
 fn test_patch_xaml_same_effect_twice() {
     assert_eq!(
-        "<!--Commented out by the mod Reduced UI Animations: <local:Age2SwipeEffect/>--><!--Commented out by the mod Reduced UI Animations: <local:Age2SwipeEffect/>-->",
-        patch_xaml("<local:Age2SwipeEffect/><local:Age2SwipeEffect/>")
+       Some(  "<Test xmlns:local=\"bla\" xmlns=\"test\"><!--The mod Reduced UI Animations replaced an element here: local:Age2SwipeEffect--><!--The mod Reduced UI Animations replaced an element here: local:Age2SwipeEffect--></Test>".to_string()),
+        patch_xaml(
+            r#"<Test xmlns="test" xmlns:local="bla"><local:Age2SwipeEffect/><local:Age2SwipeEffect/></Test>"#
+        )
     );
 }
 
 #[test]
 fn test_patch_xaml_realistic() {
     assert_eq!(
-        r#"<local:Age2ScreenSimpleMainMenu x:Name="Page" d:DesignHeight="2160" d:DesignWidth="3840" mc:Ignorable="d" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:d="http://schemas.microsoft.com/expression/blend/2008" xmlns:local="clr-namespace:aoe2wpfg" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <Canvas Width="3840" Height="2160" Background="Transparent">
-        <Canvas.Effect>
-            <!--Commented out by the mod Reduced UI Animations: <local:Age2SwipeEffect
-                SwipeLow="{Binding ElementName=Page,Path=SwipeLow}"
-                SwipeHigh="{Binding ElementName=Page,Path=SwipeHigh}"
-                PixelWidth="3840"
-                PixelHeight="2160"
-                ScreenWidth="{Binding ElementName=Page, Path=ActualWidth}"
-                ScreenHeight="{Binding ElementName=Page, Path=ActualHeight}"
-                />-->
-        </Canvas.Effect>
-    </Canvas>
-    
-    <Canvas Width="1000" Height="2160" Canvas.Left="235" Background="Transparent">
-        <Canvas.Effect>
-            <!--Commented out by the mod Reduced UI Animations: <local:Age2BlurEffect
-                BlurMask ="{StaticResource ribbon00_BBAA_blurmask}"
-                SwipeLow="{Binding ElementName=Page,Path=SwipeLow}"
-                SwipeHigh="{Binding ElementName=Page,Path=SwipeHigh}"
-                PixelTop="0"
-                PixelLeft="235"
-                PixelWidth="1000"
-                PixelHeight="2160"
-                P1="40,0"
-                P2="40,0"
-                TextureSize="128,128"
-                ScreenWidth="{Binding ElementName=Page, Path=ActualWidth}"
-                ScreenHeight="{Binding ElementName=Page, Path=ActualHeight}"
-                    />-->
-        </Canvas.Effect>
-    </Canvas>
-</local:Age2ScreenSimpleMainMenu>
-"#,
+       Some(  "<local:Age2ScreenSimpleMainMenu xmlns:local=\"clr-namespace:aoe2wpfg\" xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\" xmlns:d=\"http://schemas.microsoft.com/expression/blend/2008\" xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\" d:DesignWidth=\"3840\" mc:Ignorable=\"d\" x:Name=\"Page\" d:DesignHeight=\"2160\"><Canvas Height=\"2160\" Background=\"Transparent\" Width=\"3840\"><Canvas.Effect><!--The mod Reduced UI Animations replaced an element here: local:Age2SwipeEffect--></Canvas.Effect></Canvas><Canvas Width=\"1000\" Background=\"Transparent\" Canvas.Left=\"235\" Height=\"2160\"><Canvas.Effect><!--The mod Reduced UI Animations replaced an element here: local:Age2BlurEffect--></Canvas.Effect></Canvas></local:Age2ScreenSimpleMainMenu>".to_string()),
         patch_xaml(
             r#"<local:Age2ScreenSimpleMainMenu x:Name="Page" d:DesignHeight="2160" d:DesignWidth="3840" mc:Ignorable="d" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:d="http://schemas.microsoft.com/expression/blend/2008" xmlns:local="clr-namespace:aoe2wpfg" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Canvas Width="3840" Height="2160" Background="Transparent">
@@ -314,23 +283,25 @@ fn test_patch_xaml_realistic() {
     );
 }
 
-fn modify_xaml_file(original_content: &[u8]) -> Vec<u8> {
-    let original_content_string =
-        std::str::from_utf8(original_content).expect("Tried to decode file as UTF-8");
-    let modified_content = patch_xaml(original_content_string);
-    modified_content.into()
+fn modify_xaml_file(original_content: &[u8]) -> Option<Vec<u8>> {
+    let original_content_string = encoding_rs::UTF_8
+        .decode_with_bom_removal(original_content)
+        .0;
+    let modified_content = patch_xaml(original_content_string.as_ref());
+    modified_content.map(|value| value.into())
 }
 
 fn modify_xaml_files<'t>(directory: &'t dyn ReadDirectory) -> BTreeMap<String, DirectoryEntry> {
     let mut entries = BTreeMap::new();
     for file_entry in directory.enumerate_files() {
-        let modified_file = modify_xaml_file(&file_entry.content);
-        if &file_entry.content[..] == &modified_file[..] {
-            info!("XAML file needs no changes: {}", &file_entry.name);
-            continue;
+        let maybe_modified = modify_xaml_file(&file_entry.content);
+        match maybe_modified {
+            Some(modified) => {
+                info!("XAML file will be replaced: {}", &file_entry.name);
+                entries.insert(file_entry.name, DirectoryEntry::File(modified));
+            }
+            None => info!("XAML file needs no changes: {}", &file_entry.name),
         }
-        info!("XAML file will be replaced: {}", &file_entry.name);
-        entries.insert(file_entry.name, DirectoryEntry::File(modified_file));
     }
     entries
 }
